@@ -1,5 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useSQLiteContext } from "expo-sqlite";
+import { useEffect, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -8,37 +9,93 @@ import {
   View,
 } from "react-native";
 
+import ExerciseForm from "../../components/ExerciseForm";
 import ExerciseSelector from "../../components/ExerciseSelector";
+
 import { ExerciseDefinition } from "../../data/exercises";
 
-type LoggedExercise = {
-  id: string;
-  exercise: ExerciseDefinition;
-  sets?: {
-    reps: number;
-    weight?: number;
-  }[];
-  duration?: number;
-};
+import {
+  loadWorkout,
+  LoggedExercise,
+  saveWorkout,
+} from "../../lib/database";
+
+
+
+
+
 
 export default function WorkoutScreen() {
   const { date } = useLocalSearchParams<{ date: string }>();
+  const db = useSQLiteContext();
 
-  const [showExerciseSelector, setShowExerciseSelector] = useState(false);
+  const [showExerciseSelector, setShowExerciseSelector] =
+    useState(false);
+
+  const [selectedExercise, setSelectedExercise] =
+    useState<ExerciseDefinition | null>(null);
 
   const [loggedExercises, setLoggedExercises] = useState<
     LoggedExercise[]
   >([]);
+  useEffect(() => {
+  if (!date) {
+    return;
+  }
 
-  function handleExerciseSelect(exercise: ExerciseDefinition) {
+  async function loadSavedWorkout() {
+    try {
+      console.log("Opening workout screen for:", date);
+
+      const exercises = await loadWorkout(
+        db,
+        date
+      );
+
+      console.log(
+        "Exercises returned to screen:",
+        exercises
+      );
+
+      setLoggedExercises(exercises);
+    } catch (error) {
+      console.error(
+        "FAILED TO LOAD WORKOUT:",
+        error
+      );
+    }
+  }
+
+  loadSavedWorkout();
+}, [db, date]);
+
+  function handleExerciseSelect(
+    exercise: ExerciseDefinition
+  ) {
     setShowExerciseSelector(false);
+    setSelectedExercise(exercise);
+  }
 
+  function handleExerciseSave(exerciseData: {
+    exercise: ExerciseDefinition;
+    sets?: {
+      reps: string;
+      weight: string;
+    }[];
+    duration?: string;
+    distance?: string;
+  }) {
     const newExercise: LoggedExercise = {
-      id: `${exercise.id}-${Date.now()}`,
-      exercise,
+      id: `${exerciseData.exercise.id}-${Date.now()}`,
+      ...exerciseData,
     };
 
-    setLoggedExercises((current) => [...current, newExercise]);
+    setLoggedExercises((current) => [
+      ...current,
+      newExercise,
+    ]);
+
+    setSelectedExercise(null);
   }
 
   if (showExerciseSelector) {
@@ -54,8 +111,20 @@ export default function WorkoutScreen() {
         <ExerciseSelector
           onSelect={handleExerciseSelect}
           onCustom={() => {
-            // We'll implement this next.
+            // We'll implement custom exercises next.
           }}
+        />
+      </View>
+    );
+  }
+
+  if (selectedExercise) {
+    return (
+      <View style={styles.container}>
+        <ExerciseForm
+          exercise={selectedExercise}
+          onSave={handleExerciseSave}
+          onCancel={() => setSelectedExercise(null)}
         />
       </View>
     );
@@ -77,7 +146,9 @@ export default function WorkoutScreen() {
       >
         {loggedExercises.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No exercises yet</Text>
+            <Text style={styles.emptyTitle}>
+              No exercises yet
+            </Text>
 
             <Text style={styles.emptyText}>
               Add exercises to record today's workout.
@@ -85,7 +156,10 @@ export default function WorkoutScreen() {
           </View>
         ) : (
           loggedExercises.map((item, index) => (
-            <View key={item.id} style={styles.exerciseCard}>
+            <View
+              key={item.id}
+              style={styles.exerciseCard}
+            >
               <Text style={styles.exerciseNumber}>
                 Exercise {index + 1}
               </Text>
@@ -97,8 +171,37 @@ export default function WorkoutScreen() {
               <Text style={styles.exerciseType}>
                 {item.exercise.type === "cardio"
                   ? "Cardio"
-                  : "Strength"}
+                  : `${item.sets?.length ?? 0} sets`}
               </Text>
+
+              {item.exercise.type === "strength" &&
+                item.sets?.map((set, setIndex) => (
+                  <Text
+                    key={setIndex}
+                    style={styles.setSummary}
+                  >
+                    Set {setIndex + 1}: {set.reps} reps
+                    {set.weight
+                      ? ` · ${set.weight} kg`
+                      : ""}
+                  </Text>
+                ))}
+
+              {item.exercise.type === "cardio" && (
+                <>
+                  {item.duration && (
+                    <Text style={styles.setSummary}>
+                      Duration: {item.duration} min
+                    </Text>
+                  )}
+
+                  {item.distance && (
+                    <Text style={styles.setSummary}>
+                      Distance: {item.distance} km
+                    </Text>
+                  )}
+                </>
+              )}
             </View>
           ))
         )}
@@ -107,8 +210,35 @@ export default function WorkoutScreen() {
           style={styles.addButton}
           onPress={() => setShowExerciseSelector(true)}
         >
-          <Text style={styles.addButtonText}>＋ Add Exercise</Text>
+          <Text style={styles.addButtonText}>
+            ＋ Add Exercise
+          </Text>
         </Pressable>
+
+        {loggedExercises.length > 0 && (
+          <Pressable
+            style={styles.finishButton}
+            onPress={async () => {
+                try {
+                await saveWorkout(
+                    db,
+                    date!,
+                    loggedExercises
+                );
+
+                alert("Workout saved!");
+                router.back();
+                } catch (error) {
+                console.error("Failed to save workout:", error);
+                alert("Something went wrong while saving.");
+                }
+            }}
+            >
+            <Text style={styles.finishButtonText}>
+                Finish Workout
+            </Text>
+            </Pressable>
+        )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -188,6 +318,12 @@ const styles = StyleSheet.create({
     color: "#777777",
   },
 
+  setSummary: {
+    marginTop: 6,
+    fontSize: 14,
+    color: "#555555",
+  },
+
   addButton: {
     marginTop: 12,
     paddingVertical: 16,
@@ -198,6 +334,20 @@ const styles = StyleSheet.create({
 
   addButtonText: {
     color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  finishButton: {
+    marginTop: 12,
+    paddingVertical: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#222222",
+    alignItems: "center",
+  },
+
+  finishButtonText: {
     fontSize: 16,
     fontWeight: "600",
   },

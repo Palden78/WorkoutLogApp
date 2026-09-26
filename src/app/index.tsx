@@ -6,11 +6,7 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <Text style={styles.streak}>🔥 0 day streak</Text>
 
-      <Text style={styles.title}>September 2026</Text>
-
-      <Text style={styles.subtitle}>
-        Your workouts
-      </Text>
+      
 
       <Calendar />
     </View>
