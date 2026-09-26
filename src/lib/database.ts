@@ -1,5 +1,14 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import type { ExerciseDefinition } from "../data/exercises";
+function getLocalDateString() {
+  const today = new Date();
+
+  return `${today.getFullYear()}-${String(
+    today.getMonth() + 1
+  ).padStart(2, "0")}-${String(
+    today.getDate()
+  ).padStart(2, "0")}`;
+}
 
 export type LoggedExercise = {
   id: string;
@@ -80,6 +89,17 @@ export async function initializeDatabase(
       workout_days_per_week INTEGER NOT NULL,
       rest_days_per_week INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS schedule_days (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL,
+      day_of_week INTEGER NOT NULL,
+      day_type TEXT NOT NULL CHECK (day_type IN ('WORKOUT', 'REST')),
+
+      FOREIGN KEY (schedule_id)
+        REFERENCES schedule(id)
+        ON DELETE CASCADE
+    );
   `);
 }
 
@@ -90,6 +110,11 @@ export async function saveWorkout(
   date: string,
   exercises: LoggedExercise[]
 ) {
+  if (date > getLocalDateString()) {
+  throw new Error(
+    "Cannot save a workout for a future date."
+  );
+}
   const now = new Date().toISOString();
 
   await db.withExclusiveTransactionAsync(async (txn) => {
@@ -202,6 +227,92 @@ export async function saveWorkout(
       }
     }
   });
+}
+
+export async function saveSchedule(
+  db: SQLiteDatabase,
+  workoutDays: number[]
+) {
+  const workoutDaysPerWeek = workoutDays.length;
+  const restDaysPerWeek = 7 - workoutDaysPerWeek;
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync("DELETE FROM schedule");
+
+    const scheduleResult = await txn.runAsync(
+      `
+      INSERT INTO schedule
+      (workout_days_per_week, rest_days_per_week)
+      VALUES (?, ?)
+      `,
+      workoutDaysPerWeek,
+      restDaysPerWeek
+    );
+
+    const scheduleId = scheduleResult.lastInsertRowId;
+
+    for (let day = 0; day < 7; day++) {
+      const dayType = workoutDays.includes(day)
+        ? "WORKOUT"
+        : "REST";
+
+      await txn.runAsync(
+        `
+        INSERT INTO schedule_days
+        (schedule_id, day_of_week, day_type)
+        VALUES (?, ?, ?)
+        `,
+        scheduleId,
+        day,
+        dayType
+      );
+    }
+  });
+}
+
+export async function loadSchedule(
+  db: SQLiteDatabase
+) {
+  const schedule = await db.getFirstAsync<{
+    id: number;
+    workout_days_per_week: number;
+    rest_days_per_week: number;
+  }>(
+    `
+    SELECT
+      id,
+      workout_days_per_week,
+      rest_days_per_week
+    FROM schedule
+    ORDER BY id DESC
+    LIMIT 1
+    `
+  );
+
+  if (!schedule) {
+    return null;
+  }
+
+  const days = await db.getAllAsync<{
+    day_of_week: number;
+    day_type: "WORKOUT" | "REST";
+  }>(
+    `
+    SELECT
+      day_of_week,
+      day_type
+    FROM schedule_days
+    WHERE schedule_id = ?
+    ORDER BY day_of_week ASC
+    `,
+    schedule.id
+  );
+
+  return {
+    workoutDaysPerWeek: schedule.workout_days_per_week,
+    restDaysPerWeek: schedule.rest_days_per_week,
+    days,
+  };
 }
 
 export async function loadWorkout(
@@ -340,4 +451,12 @@ export async function loadWorkout(
   );
 
   return loadedExercises;
+}
+
+export async function clearAllWorkouts(
+  db: SQLiteDatabase
+) {
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync("DELETE FROM workouts");
+  });
 }

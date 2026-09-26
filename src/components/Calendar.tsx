@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -7,6 +7,8 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
+import { useFocusEffect } from "expo-router";
+
 
 const YEAR = 2026;
 const MONTH = 8; // September (0 = January)
@@ -41,39 +43,47 @@ export default function Calendar() {
     0
     ).getDate();
 
-  useEffect(() => {
-  async function loadCompletedDates() {
-    try {
-      const monthStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  useFocusEffect(
+  useCallback(() => {
+    async function loadCompletedDates() {
+      try {
+        const monthStart = `${year}-${String(month + 1).padStart(
+          2,
+          "0"
+        )}-01`;
 
-      const monthEnd = `${year}-${String(month + 1).padStart(2, "0")}-${String(numberOfDays).padStart(2, "0")}`;
+        const monthEnd = `${year}-${String(month + 1).padStart(
+          2,
+          "0"
+        )}-${String(numberOfDays).padStart(2, "0")}`;
 
-      const workouts = await db.getAllAsync<{
-        date: string;
-      }>(
-        `
-        SELECT date
-        FROM workouts
-        WHERE date >= ?
-        AND date <= ?
-        `,
-        monthStart,
-        monthEnd
-      );
+        const workouts = await db.getAllAsync<{
+          date: string;
+        }>(
+          `
+          SELECT date
+          FROM workouts
+          WHERE date >= ?
+          AND date <= ?
+          `,
+          monthStart,
+          monthEnd
+        );
 
-      setCompletedDates(
-        workouts.map((workout) => workout.date)
-      );
-    } catch (error) {
-      console.error(
-        "Failed to load completed workout dates:",
-        error
-      );
+        setCompletedDates(
+          workouts.map((workout) => workout.date)
+        );
+      } catch (error) {
+        console.error(
+          "Failed to load completed workout dates:",
+          error
+        );
+      }
     }
-  }
 
-  loadCompletedDates();
-}, [db, year, month, numberOfDays]);
+    loadCompletedDates();
+  }, [db, year, month, numberOfDays])
+);
 
   const calendarDays = [];
 
@@ -84,6 +94,21 @@ export default function Calendar() {
   for (let day = 1; day <= numberOfDays; day++) {
     calendarDays.push(day);
   }
+
+  function isFutureDate(day: number) {
+  const selectedDate = new Date(
+    year,
+    month,
+    day
+  );
+
+  const today = new Date();
+
+  selectedDate.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+
+  return selectedDate > today;
+}
 
   function handleDayPress(day: number) {
     const date = `${year}-${String(month + 1).padStart(
@@ -165,12 +190,17 @@ function goToNextMonth() {
           }
 
           const completed = isCompleted(day);
+          const future = isFutureDate(day);
 
           return (
             <Pressable
-              key={day}
-              style={styles.day}
-              onPress={() => handleDayPress(day)}
+                key={day}
+                style={[
+                styles.day,
+                future && styles.futureDay,
+                ]}
+                disabled={future}
+                onPress={() => handleDayPress(day)}
             >
               <View
                 style={[
@@ -214,6 +244,10 @@ const styles = StyleSheet.create({
 monthTitle: {
   fontSize: 24,
   fontWeight: "700",
+},
+
+futureDay: {
+  opacity: 0.35,
 },
 
 monthButton: {
