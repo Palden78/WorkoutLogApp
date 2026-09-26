@@ -24,6 +24,11 @@ type WorkoutExercise = {
 
 type Props = {
   exercise: ExerciseDefinition;
+  initialData?: {
+    sets?: StrengthSet[];
+    duration?: string;
+    distance?: string;
+  };
   onSave: (exercise: WorkoutExercise) => void;
   onCancel: () => void;
 };
@@ -32,11 +37,19 @@ export default function ExerciseForm({
   exercise,
   onSave,
   onCancel,
+  initialData
 }: Props) {
-  const [sets, setSets] = useState<StrengthSet[]>([]);
+  const [sets, setSets] = useState<StrengthSet[]>(
+    initialData?.sets ?? []
+    );
 
-  const [duration, setDuration] = useState("");
-  const [distance, setDistance] = useState("");
+    const [duration, setDuration] = useState(
+    initialData?.duration ?? ""
+    );
+
+    const [distance, setDistance] = useState(
+    initialData?.distance ?? ""
+    );
 
   function addSet() {
     setSets((currentSets) => [
@@ -226,8 +239,8 @@ export default function ExerciseForm({
           onPress={handleSave}
         >
           <Text style={styles.saveButtonText}>
-            Add Exercise
-          </Text>
+            {initialData ? "Save Changes" : "Add Exercise"}
+            </Text>
         </Pressable>
 
         <View style={{ height: 40 }} />

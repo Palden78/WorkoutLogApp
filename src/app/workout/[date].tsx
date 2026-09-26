@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Alert,
 } from "react-native";
 
 import ExerciseForm from "../../components/ExerciseForm";
@@ -18,6 +19,7 @@ import {
   loadWorkout,
   LoggedExercise,
   saveWorkout,
+  deleteWorkout
 } from "../../lib/database";
 
 
@@ -45,6 +47,9 @@ export default function WorkoutScreen() {
 
   const [selectedExercise, setSelectedExercise] =
     useState<ExerciseDefinition | null>(null);
+
+  const [editingExercise, setEditingExercise] =
+  useState<LoggedExercise | null>(null);
 
   const [loggedExercises, setLoggedExercises] = useState<
     LoggedExercise[]
@@ -76,9 +81,46 @@ export default function WorkoutScreen() {
       );
     }
   }
-
   loadSavedWorkout();
 }, [db, date]);
+
+     function handleDeleteWorkout() {
+        if (!date) {
+            return;
+        }
+
+        Alert.alert(
+            "Delete Workout",
+            "Are you sure you want to delete this workout? This cannot be undone.",
+            [
+            {
+                text: "Cancel",
+                style: "cancel",
+            },
+            {
+                text: "Delete",
+                style: "destructive",
+                onPress: async () => {
+                try {
+                    await deleteWorkout(db, date);
+
+                    router.back();
+                } catch (error) {
+                    console.error(
+                    "Failed to delete workout:",
+                    error
+                    );
+
+                    Alert.alert(
+                    "Error",
+                    "Something went wrong while deleting the workout."
+                    );
+                }
+                },
+            },
+            ]
+        );
+        }
 
   function handleExerciseSelect(
     exercise: ExerciseDefinition
@@ -86,6 +128,41 @@ export default function WorkoutScreen() {
     setShowExerciseSelector(false);
     setSelectedExercise(exercise);
   }
+
+  function handleEditExercise(
+    exercise: LoggedExercise
+    ) {
+    setEditingExercise(exercise);
+    }
+
+    function handleEditSave(
+  exerciseData: {
+    exercise: ExerciseDefinition;
+    sets?: {
+      reps: string;
+      weight: string;
+    }[];
+    duration?: string;
+    distance?: string;
+  }
+) {
+  if (!editingExercise) {
+    return;
+  }
+
+  setLoggedExercises((current) =>
+    current.map((item) =>
+      item.id === editingExercise.id
+        ? {
+            ...item,
+            ...exerciseData,
+          }
+        : item
+    )
+  );
+
+  setEditingExercise(null);
+}
 
   function handleExerciseSave(exerciseData: {
     exercise: ExerciseDefinition;
@@ -109,6 +186,12 @@ export default function WorkoutScreen() {
     setSelectedExercise(null);
   }
 
+  function handleDeleteExercise(exerciseId: string) {
+  setLoggedExercises((current) =>
+    current.filter((exercise) => exercise.id !== exerciseId)
+  );
+}
+
   if (showExerciseSelector) {
     return (
       <View style={styles.container}>
@@ -122,12 +205,29 @@ export default function WorkoutScreen() {
         <ExerciseSelector
           onSelect={handleExerciseSelect}
           onCustom={() => {
-            // We'll implement custom exercises next.
+            router.push("/custom-exercise");
           }}
         />
       </View>
     );
   }
+
+  if (editingExercise) {
+  return (
+    <View style={styles.container}>
+      <ExerciseForm
+        exercise={editingExercise.exercise}
+        initialData={{
+          sets: editingExercise.sets,
+          duration: editingExercise.duration,
+          distance: editingExercise.distance,
+        }}
+        onSave={handleEditSave}
+        onCancel={() => setEditingExercise(null)}
+      />
+    </View>
+  );
+}
 
   if (selectedExercise) {
     return (
@@ -167,53 +267,74 @@ export default function WorkoutScreen() {
           </View>
         ) : (
           loggedExercises.map((item, index) => (
-            <View
-              key={item.id}
-              style={styles.exerciseCard}
-            >
-              <Text style={styles.exerciseNumber}>
-                Exercise {index + 1}
-              </Text>
+             <View
+  key={item.id}
+  style={styles.exerciseCard}
+>
+  <View style={styles.exerciseActions}>
+  <Pressable
+    onPress={() =>
+      handleEditExercise(item)
+    }
+    hitSlop={10}
+  >
+    <Text style={styles.editText}>
+      Edit
+    </Text>
+  </Pressable>
 
-              <Text style={styles.exerciseName}>
-                {item.exercise.name}
-              </Text>
+  <Pressable
+    onPress={() =>
+      handleDeleteExercise(item.id)
+    }
+    hitSlop={10}
+  >
+    <Text style={styles.deleteText}>
+      Delete
+    </Text>
+  </Pressable>
+</View>
 
-              <Text style={styles.exerciseType}>
-                {item.exercise.type === "cardio"
-                  ? "Cardio"
-                  : `${item.sets?.length ?? 0} sets`}
-              </Text>
+  <Text style={styles.exerciseName}>
+    {item.exercise.name}
+  </Text>
 
-              {item.exercise.type === "strength" &&
-                item.sets?.map((set, setIndex) => (
-                  <Text
-                    key={setIndex}
-                    style={styles.setSummary}
-                  >
-                    Set {setIndex + 1}: {set.reps} reps
-                    {set.weight
-                      ? ` · ${set.weight} kg`
-                      : ""}
-                  </Text>
-                ))}
+  <Text style={styles.exerciseType}>
+    {item.exercise.type === "cardio"
+      ? "Cardio"
+      : `${item.sets?.length ?? 0} sets`}
+  </Text>
 
-              {item.exercise.type === "cardio" && (
-                <>
-                  {item.duration && (
-                    <Text style={styles.setSummary}>
-                      Duration: {item.duration} min
-                    </Text>
-                  )}
+  {item.exercise.type === "strength" &&
+    item.sets?.map((set, setIndex) => (
+      <Text
+        key={setIndex}
+        style={styles.setSummary}
+      >
+        Set {setIndex + 1}: {set.reps} reps
+        {set.weight
+          ? ` · ${set.weight} kg`
+          : ""}
+      </Text>
+    ))}
 
-                  {item.distance && (
-                    <Text style={styles.setSummary}>
-                      Distance: {item.distance} km
-                    </Text>
-                  )}
-                </>
-              )}
-            </View>
+  {item.exercise.type === "cardio" && (
+    <>
+      {item.duration && (
+        <Text style={styles.setSummary}>
+          Duration: {item.duration} min
+        </Text>
+      )}
+
+      {item.distance && (
+        <Text style={styles.setSummary}>
+          Distance: {item.distance} km
+        </Text>
+      )}
+    </>
+  )}
+</View>
+            
           ))
         )}
 
@@ -250,6 +371,16 @@ export default function WorkoutScreen() {
             </Text>
             </Pressable>
         )}
+        {loggedExercises.length > 0 && (
+            <Pressable
+                style={styles.deleteWorkoutButton}
+                onPress={handleDeleteWorkout}
+            >
+                <Text style={styles.deleteWorkoutText}>
+                Delete Workout
+                </Text>
+            </Pressable>
+            )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -305,6 +436,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  deleteWorkoutButton: {
+    marginTop: 12,
+    paddingVertical: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#CC4444",
+    alignItems: "center",
+    },
+
+    deleteWorkoutText: {
+    color: "#CC4444",
+    fontSize: 16,
+    fontWeight: "600",
+    },
+
   exerciseCard: {
     padding: 18,
     borderRadius: 16,
@@ -312,11 +458,21 @@ const styles = StyleSheet.create({
     borderColor: "#E5E5E5",
     marginBottom: 12,
   },
+  exerciseActions: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 16,
+},
+
+editText: {
+  color: "#222222",
+  fontSize: 13,
+  fontWeight: "600",
+},
 
   exerciseNumber: {
     fontSize: 13,
     color: "#888888",
-    marginBottom: 5,
   },
 
   exerciseName: {
@@ -357,6 +513,19 @@ const styles = StyleSheet.create({
     borderColor: "#222222",
     alignItems: "center",
   },
+
+  exerciseHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 5,
+    },
+
+    deleteText: {
+    color: "#CC4444",
+    fontSize: 13,
+    fontWeight: "600",
+    },
 
   finishButtonText: {
     fontSize: 16,

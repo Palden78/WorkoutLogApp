@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Pressable,
 } from "react-native";
 
 import Calendar from "../components/Calendar";
@@ -86,6 +87,22 @@ export default function HomeScreen() {
       </Text>
 
       <Calendar />
+      <Pressable
+        style={styles.historyButton}
+        onPress={() => router.push("/history")}
+      >
+        <Text style={styles.historyButtonText}>
+          View Workout History
+        </Text>
+      </Pressable>
+      <Pressable
+        style={styles.historyButton}
+        onPress={() => router.push("/progress")}
+      >
+        <Text style={styles.historyButtonText}>
+          View Progress
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -146,4 +163,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666666",
   },
+  historyButton: {
+  marginTop: 16,
+  paddingVertical: 16,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: "#222222",
+  alignItems: "center",
+},
+
+historyButtonText: {
+  fontSize: 16,
+  fontWeight: "600",
+},
 });

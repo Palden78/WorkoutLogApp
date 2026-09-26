@@ -9,7 +9,11 @@ function getLocalDateString() {
     today.getDate()
   ).padStart(2, "0")}`;
 }
-
+export type WorkoutStats = {
+  total_workouts: number;
+  month_workouts: number;
+  total_sets: number;
+};
 export type LoggedExercise = {
   id: string;
 
@@ -24,6 +28,56 @@ export type LoggedExercise = {
   distance?: string;
 };
 
+export type WorkoutHistoryItem = {
+  id: number;
+  date: string;
+  exercise_count: number;
+  exercise_names: string;
+};
+
+export async function loadWorkoutStats(
+  db: SQLiteDatabase
+): Promise<WorkoutStats> {
+  const currentDate = new Date();
+
+  const year = currentDate.getFullYear();
+  const month = String(
+    currentDate.getMonth() + 1
+  ).padStart(2, "0");
+
+  const monthStart = `${year}-${month}-01`;
+
+  const result = await db.getFirstAsync<WorkoutStats>(
+    `
+    SELECT
+      (
+        SELECT COUNT(*)
+        FROM workouts
+      ) AS total_workouts,
+
+      (
+        SELECT COUNT(*)
+        FROM workouts
+        WHERE date >= ?
+      ) AS month_workouts,
+
+      (
+        SELECT COUNT(*)
+        FROM sets
+      ) AS total_sets
+    `,
+    monthStart
+  );
+
+  return (
+    result ?? {
+      total_workouts: 0,
+      month_workouts: 0,
+      total_sets: 0,
+    }
+  );
+}
+
 export async function initializeDatabase(
   db: SQLiteDatabase
 ) {
@@ -36,7 +90,8 @@ export async function initializeDatabase(
       name TEXT NOT NULL,
       category TEXT NOT NULL,
       type TEXT NOT NULL CHECK (type IN ('strength', 'cardio')),
-      is_custom INTEGER NOT NULL DEFAULT 0
+      is_custom INTEGER NOT NULL DEFAULT 0,
+      is_deleted INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS workouts (
@@ -101,6 +156,131 @@ export async function initializeDatabase(
         ON DELETE CASCADE
     );
   `);
+
+  try {
+    await db.execAsync(`
+      ALTER TABLE exercise_definitions
+      ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0;
+    `);
+  } catch (error) {
+    // Column already exists, so nothing to do.
+  }
+}
+export async function loadCustomExercises(
+  db: SQLiteDatabase
+): Promise<ExerciseDefinition[]> {
+  const rows = await db.getAllAsync<{
+    id: string;
+    name: string;
+    category: string;
+    type: "strength" | "cardio";
+  }>(
+    `
+    SELECT
+      id,
+      name,
+      category,
+      type
+    FROM exercise_definitions
+    WHERE is_custom = 1
+    AND is_deleted = 0
+    ORDER BY name ASC
+    `
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    type: row.type,
+  }));
+}
+
+export async function loadWorkoutHistory(
+  db: SQLiteDatabase
+): Promise<WorkoutHistoryItem[]> {
+  return await db.getAllAsync<WorkoutHistoryItem>(
+    `
+    SELECT
+      workouts.id,
+      workouts.date,
+      COUNT(workout_exercises.id) AS exercise_count,
+      GROUP_CONCAT(
+        exercise_definitions.name,
+        ' · '
+      ) AS exercise_names
+    FROM workouts
+    LEFT JOIN workout_exercises
+      ON workout_exercises.workout_id = workouts.id
+    LEFT JOIN exercise_definitions
+      ON exercise_definitions.id =
+         workout_exercises.exercise_definition_id
+    GROUP BY workouts.id
+    ORDER BY workouts.date DESC
+    `
+  );
+}
+export async function deleteCustomExercise(
+  db: SQLiteDatabase,
+  exerciseId: string
+) {
+  await db.runAsync(
+    `
+    UPDATE exercise_definitions
+    SET is_deleted = 1
+    WHERE id = ?
+    AND is_custom = 1
+    `,
+    exerciseId
+  );
+}
+export async function createCustomExercise(
+  db: SQLiteDatabase,
+  exercise: {
+    name: string;
+    category: string;
+    type: "strength" | "cardio";
+  }
+) {
+  const existing = await db.getFirstAsync<{
+  id: string;
+    }>(
+      `
+      SELECT id
+      FROM exercise_definitions
+      WHERE LOWER(name) = LOWER(?)
+      AND is_deleted = 0
+      LIMIT 1
+      `,
+      exercise.name.trim()
+    );
+
+  if (existing) {
+    throw new Error(
+      "An exercise with this name already exists."
+    );
+  }
+
+  const id = `custom-${Date.now()}`;
+
+  await db.runAsync(
+    `
+    INSERT INTO exercise_definitions
+    (id, name, category, type, is_custom, is_deleted)
+    VALUES (?, ?, ?, ?, 1, 0)
+    `,
+    id,
+    exercise.name.trim(),
+    exercise.category,
+    exercise.type
+  );
+
+  return {
+    id,
+    name: exercise.name.trim(),
+    category: exercise.category,
+    type: exercise.type,
+  };
 }
 
 
@@ -227,6 +407,19 @@ export async function saveWorkout(
       }
     }
   });
+}
+
+export async function deleteWorkout(
+  db: SQLiteDatabase,
+  date: string
+) {
+  await db.runAsync(
+    `
+    DELETE FROM workouts
+    WHERE date = ?
+    `,
+    date
+  );
 }
 
 export async function saveSchedule(
