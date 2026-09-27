@@ -19,7 +19,8 @@ import {
   loadWorkout,
   LoggedExercise,
   saveWorkout,
-  deleteWorkout
+  deleteWorkout,
+  loadLastExerciseData,
 } from "../../lib/database";
 
 
@@ -49,6 +50,9 @@ export default function WorkoutScreen() {
     useState<ExerciseDefinition | null>(null);
 
   const [editingExercise, setEditingExercise] =
+  useState<LoggedExercise | null>(null);
+
+  const [previousExerciseData, setPreviousExerciseData] =
   useState<LoggedExercise | null>(null);
 
   const [loggedExercises, setLoggedExercises] = useState<
@@ -122,12 +126,30 @@ export default function WorkoutScreen() {
         );
         }
 
-  function handleExerciseSelect(
-    exercise: ExerciseDefinition
-  ) {
-    setShowExerciseSelector(false);
+  async function handleExerciseSelect(
+  exercise: ExerciseDefinition
+) {
+  try {
+    const previousData =
+      await loadLastExerciseData(
+        db,
+        exercise.id
+      );
+
     setSelectedExercise(exercise);
+    setPreviousExerciseData(previousData);
+    setShowExerciseSelector(false);
+  } catch (error) {
+    console.error(
+      "Failed to load previous exercise data:",
+      error
+    );
+
+    setSelectedExercise(exercise);
+    setPreviousExerciseData(null);
+    setShowExerciseSelector(false);
   }
+}
 
   function handleEditExercise(
     exercise: LoggedExercise
@@ -184,6 +206,7 @@ export default function WorkoutScreen() {
     ]);
 
     setSelectedExercise(null);
+    setPreviousExerciseData(null);
   }
 
   function handleDeleteExercise(exerciseId: string) {
@@ -230,16 +253,24 @@ export default function WorkoutScreen() {
 }
 
   if (selectedExercise) {
-    return (
-      <View style={styles.container}>
-        <ExerciseForm
-          exercise={selectedExercise}
-          onSave={handleExerciseSave}
-          onCancel={() => setSelectedExercise(null)}
-        />
-      </View>
-    );
-  }
+  return (
+    <View style={styles.container}>
+      <ExerciseForm
+        exercise={selectedExercise}
+        initialData={{
+          sets: previousExerciseData?.sets,
+          duration: previousExerciseData?.duration,
+          distance: previousExerciseData?.distance,
+        }}
+        onSave={handleExerciseSave}
+        onCancel={() => {
+          setSelectedExercise(null);
+          setPreviousExerciseData(null);
+        }}
+      />
+    </View>
+  );
+}
 
   return (
     <View style={styles.container}>

@@ -41,6 +41,10 @@ export async function calculateCurrentStreak(
     workouts.map((workout) => workout.date)
   );
 
+  if (workouts.length === 0) {
+    return 0;
+    }
+
   let streak = 0;
 
   let currentDate = new Date();

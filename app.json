@@ -4,11 +4,12 @@
     "slug": "workout-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/icon.png",
     "scheme": "workouttracker",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/icon.png",
+      "bundleIdentifier": "com.palden78.workout-tracker"
     },
     "android": {
       "adaptiveIcon": {
@@ -33,7 +34,8 @@
           "imageWidth": 76
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

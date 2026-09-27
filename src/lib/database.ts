@@ -14,6 +14,65 @@ export type WorkoutStats = {
   month_workouts: number;
   total_sets: number;
 };
+export type ExerciseProgressSet = {
+  workout_date: string;
+  set_number: number;
+  reps: number;
+  weight: number | null;
+};
+
+export type ExercisePersonalRecord = {
+  exercise_id: string;
+  exercise_name: string;
+  category: string;
+  heaviest_weight: number;
+  reps_at_heaviest_weight: number;
+  estimated_one_rep_max: number;
+};
+
+export async function loadPersonalRecords(
+  db: SQLiteDatabase
+): Promise<ExercisePersonalRecord[]> {
+  return await db.getAllAsync<ExercisePersonalRecord>(
+    `
+    SELECT
+      exercise_definitions.id AS exercise_id,
+      exercise_definitions.name AS exercise_name,
+      exercise_definitions.category,
+      sets.weight AS heaviest_weight,
+      sets.reps AS reps_at_heaviest_weight,
+      ROUND(
+        sets.weight * (1 + sets.reps / 30.0),
+        1
+      ) AS estimated_one_rep_max
+    FROM sets
+    INNER JOIN workout_exercises
+      ON sets.workout_exercise_id =
+         workout_exercises.id
+    INNER JOIN exercise_definitions
+      ON exercise_definitions.id =
+         workout_exercises.exercise_definition_id
+    WHERE exercise_definitions.type = 'strength'
+      AND sets.id = (
+        SELECT inner_sets.id
+        FROM sets AS inner_sets
+        INNER JOIN workout_exercises AS inner_workout_exercises
+          ON inner_sets.workout_exercise_id =
+             inner_workout_exercises.id
+        WHERE inner_workout_exercises.exercise_definition_id =
+          exercise_definitions.id
+        ORDER BY
+          inner_sets.weight DESC,
+          inner_sets.reps DESC,
+          inner_sets.id ASC
+        LIMIT 1
+      )
+    ORDER BY exercise_definitions.name ASC
+    `
+  );
+}
+
+
 export type LoggedExercise = {
   id: string;
 
@@ -78,6 +137,55 @@ export async function loadWorkoutStats(
   );
 }
 
+export async function loadExerciseProgress(
+  db: SQLiteDatabase,
+  exerciseDefinitionId: string
+): Promise<ExerciseProgressSet[]> {
+  return await db.getAllAsync<ExerciseProgressSet>(
+    `
+    SELECT
+      workouts.date AS workout_date,
+      sets.set_number,
+      sets.reps,
+      sets.weight
+    FROM sets
+    INNER JOIN workout_exercises
+      ON sets.workout_exercise_id =
+         workout_exercises.id
+    INNER JOIN workouts
+      ON workout_exercises.workout_id =
+         workouts.id
+    WHERE workout_exercises.exercise_definition_id = ?
+    ORDER BY
+      workouts.date DESC,
+      sets.set_number ASC
+    `,
+    exerciseDefinitionId
+  );
+}
+export type ExerciseProgressOption = {
+  id: string;
+  name: string;
+  category: string;
+};
+
+export async function loadExerciseProgressOptions(
+  db: SQLiteDatabase
+): Promise<ExerciseProgressOption[]> {
+  return await db.getAllAsync<ExerciseProgressOption>(
+    `
+    SELECT DISTINCT
+      exercise_definitions.id,
+      exercise_definitions.name,
+      exercise_definitions.category
+    FROM exercise_definitions
+    INNER JOIN workout_exercises
+      ON exercise_definitions.id =
+         workout_exercises.exercise_definition_id
+    ORDER BY exercise_definitions.name ASC
+    `
+  );
+}
 export async function initializeDatabase(
   db: SQLiteDatabase
 ) {
@@ -652,4 +760,202 @@ export async function clearAllWorkouts(
   await db.withExclusiveTransactionAsync(async (txn) => {
     await txn.runAsync("DELETE FROM workouts");
   });
+}
+
+
+export async function loadLastExerciseData(
+  db: SQLiteDatabase,
+  exerciseDefinitionId: string
+): Promise<LoggedExercise | null> {
+  const exercise = await db.getFirstAsync<{
+    id: string;
+    name: string;
+    category: string;
+    type: "strength" | "cardio";
+  }>(
+    `
+    SELECT
+      id,
+      name,
+      category,
+      type
+    FROM exercise_definitions
+    WHERE id = ?
+    `,
+    exerciseDefinitionId
+  );
+
+  if (!exercise) {
+    return null;
+  }
+
+  const workoutExercise =
+    await db.getFirstAsync<{
+      id: number;
+    }>(
+      `
+      SELECT workout_exercises.id
+      FROM workout_exercises
+      INNER JOIN workouts
+        ON workout_exercises.workout_id = workouts.id
+      WHERE workout_exercises.exercise_definition_id = ?
+      ORDER BY workouts.date DESC
+      LIMIT 1
+      `,
+      exerciseDefinitionId
+    );
+
+  if (!workoutExercise) {
+    return null;
+  }
+
+  if (exercise.type === "strength") {
+    const sets = await db.getAllAsync<{
+      reps: number;
+      weight: number | null;
+    }>(
+      `
+      SELECT reps, weight
+      FROM sets
+      WHERE workout_exercise_id = ?
+      ORDER BY set_number ASC
+      `,
+      workoutExercise.id
+    );
+
+    return {
+      id: exercise.id,
+      exercise: {
+        id: exercise.id,
+        name: exercise.name,
+        category: exercise.category,
+        type: exercise.type,
+      },
+      sets: sets.map((set) => ({
+        reps: String(set.reps),
+        weight:
+          set.weight === null
+            ? ""
+            : String(set.weight),
+      })),
+    };
+  }
+
+  const cardio =
+    await db.getFirstAsync<{
+      duration_seconds: number;
+      distance_km: number | null;
+    }>(
+      `
+      SELECT
+        duration_seconds,
+        distance_km
+      FROM cardio_details
+      WHERE workout_exercise_id = ?
+      `,
+      workoutExercise.id
+    );
+
+  if (!cardio) {
+    return null;
+  }
+
+  return {
+    id: exercise.id,
+    exercise: {
+      id: exercise.id,
+      name: exercise.name,
+      category: exercise.category,
+      type: exercise.type,
+    },
+    duration: String(
+      Math.floor(cardio.duration_seconds / 60)
+    ),
+    distance:
+      cardio.distance_km === null
+        ? ""
+        : String(cardio.distance_km),
+  };
+}
+
+
+export type MonthlyWorkoutExportRow = {
+  date: string;
+  exercise_name: string;
+  category: string;
+  type: "strength" | "cardio";
+  set_number: number | null;
+  reps: number | null;
+  weight: number | null;
+  duration_seconds: number | null;
+  distance_km: number | null;
+};
+
+export async function loadMonthlyWorkoutData(
+  db: SQLiteDatabase,
+  year: number,
+  month: number
+): Promise<MonthlyWorkoutExportRow[]> {
+  const monthString = String(month).padStart(2, "0");
+  const startDate = `${year}-${monthString}-01`;
+
+  const nextMonth = new Date(year, month, 1);
+  const nextYear = nextMonth.getFullYear();
+  const nextMonthNumber = String(
+    nextMonth.getMonth() + 1
+  ).padStart(2, "0");
+
+  const endDate = `${nextYear}-${nextMonthNumber}-01`;
+
+  return await db.getAllAsync<MonthlyWorkoutExportRow>(
+    `
+    SELECT
+      workouts.date AS date,
+      exercise_definitions.name AS exercise_name,
+      exercise_definitions.category AS category,
+      exercise_definitions.type AS type,
+      sets.set_number AS set_number,
+      sets.reps AS reps,
+      sets.weight AS weight,
+      cardio_details.duration_seconds AS duration_seconds,
+      cardio_details.distance_km AS distance_km
+
+    FROM workouts
+
+    INNER JOIN workout_exercises
+      ON workout_exercises.workout_id = workouts.id
+
+    INNER JOIN exercise_definitions
+      ON exercise_definitions.id =
+         workout_exercises.exercise_definition_id
+
+    LEFT JOIN sets
+      ON sets.workout_exercise_id =
+         workout_exercises.id
+
+    LEFT JOIN cardio_details
+      ON cardio_details.workout_exercise_id =
+         workout_exercises.id
+
+    WHERE workouts.date >= ?
+      AND workouts.date < ?
+
+    ORDER BY
+      workouts.date ASC,
+      workout_exercises.order_index ASC,
+      sets.set_number ASC
+    `,
+    startDate,
+    endDate
+  );
+}
+
+export async function clearAllWorkoutData(
+  db: SQLiteDatabase
+) {
+  await db.withExclusiveTransactionAsync(
+    async (txn) => {
+      await txn.runAsync(`DELETE FROM workouts`);
+    }
+  );
 }

@@ -8,8 +8,9 @@ import {
   StyleSheet,
   Text,
   View,
+  Alert,
 } from "react-native";
-
+import { exportMonthlyWorkoutData } from "../lib/export";
 import {
   loadWorkoutStats,
   WorkoutStats,
@@ -19,6 +20,28 @@ import { calculateCurrentStreak } from "../lib/streak";
 
 export default function ProgressScreen() {
   const db = useSQLiteContext();
+
+async function handleExportMonth() {
+  try {
+    const now = new Date();
+
+    await exportMonthlyWorkoutData(
+      db,
+      now.getFullYear(),
+      now.getMonth() + 1
+    );
+  } catch (error) {
+    console.error(
+      "Failed to export workout data:",
+      error
+    );
+
+    Alert.alert(
+      "Export Failed",
+      "Something went wrong while exporting your workout data."
+    );
+  }
+}
 
   const [stats, setStats] =
     useState<WorkoutStats | null>(null);
@@ -125,16 +148,47 @@ export default function ProgressScreen() {
         </View>
 
         <View style={styles.statCardLarge}>
-          <Text style={styles.statNumber}>
-            {stats.total_sets}
-          </Text>
+  <Text style={styles.statNumber}>
+    {stats.total_sets}
+  </Text>
 
-          <Text style={styles.statLabel}>
-            Total Sets
-          </Text>
+  <Text style={styles.statLabel}>
+    Total Sets
+  </Text>
         </View>
 
+        <Pressable
+        style={styles.historyButton}
+        onPress={() => router.push("/progression")}
+        >
+        <Text style={styles.historyButtonText}>
+            Exercise Progress
+        </Text>
+        </Pressable>
+
+        <Pressable
+        style={styles.historyButton}
+        onPress={() => router.push("/records")}
+        >
+        <Text style={styles.historyButtonText}>
+            Personal Records
+        </Text>
+        </Pressable>
+
+        <Pressable
+            style={styles.exportButton}
+            onPress={handleExportMonth}
+            >
+            <Text style={styles.exportButtonText}>
+                Export This Month
+            </Text>
+            </Pressable>
+        
+        
+
         <View style={{ height: 40 }} />
+
+       
       </ScrollView>
     </View>
   );
@@ -208,6 +262,20 @@ const styles = StyleSheet.create({
     color: "#777777",
   },
 
+  historyButton: {
+  marginTop: 12,
+  padding: 18,
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "#E5E5E5",
+  alignItems: "center",
+},
+
+historyButtonText: {
+  fontSize: 16,
+  fontWeight: "600",
+},
+
   statsRow: {
     flexDirection: "row",
     gap: 12,
@@ -240,4 +308,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#777777",
   },
+
+  exportButton: {
+  marginTop: 24,
+  backgroundColor: "#222",
+  paddingVertical: 16,
+  borderRadius: 12,
+  alignItems: "center",
+},
+
+exportButtonText: {
+  color: "#fff",
+  fontSize: 16,
+  fontWeight: "600",
+},
 });
