@@ -9,6 +9,11 @@ import {
   loadMonthlyWorkoutData,
   MonthlyWorkoutExportRow,
 } from "./database";
+import {
+  XLSX_MIME_TYPE,
+  WORKOUT_EXPORT_HEADERS,
+  WORKOUT_WORKSHEET_NAME,
+} from "./workout-import";
 
 import type { SQLiteDatabase } from "expo-sqlite";
 
@@ -55,7 +60,10 @@ export async function exportMonthlyWorkoutData(
 
   const worksheet =
     XLSX.utils.json_to_sheet(
-      spreadsheetRows
+      spreadsheetRows,
+      {
+        header: [...WORKOUT_EXPORT_HEADERS],
+      }
     );
 
   worksheet["!cols"] = [
@@ -76,7 +84,7 @@ export async function exportMonthlyWorkoutData(
   XLSX.utils.book_append_sheet(
     workbook,
     worksheet,
-    "Workout Data"
+    WORKOUT_WORKSHEET_NAME
   );
 
   const excelData =
@@ -119,8 +127,7 @@ export async function exportMonthlyWorkoutData(
   await Sharing.shareAsync(
     file.uri,
     {
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      mimeType: XLSX_MIME_TYPE,
       dialogTitle:
         "Export Workout Data",
       UTI:

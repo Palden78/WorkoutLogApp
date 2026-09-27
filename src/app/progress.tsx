@@ -176,15 +176,22 @@ async function handleExportMonth() {
         </Pressable>
 
         <Pressable
-            style={styles.exportButton}
-            onPress={handleExportMonth}
-            >
-            <Text style={styles.exportButtonText}>
-                Export This Month
-            </Text>
-            </Pressable>
-        
-        
+          style={styles.exportButton}
+          onPress={handleExportMonth}
+        >
+          <Text style={styles.exportButtonText}>
+            Export This Month
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.importButton}
+          onPress={() => router.push("/import-workouts")}
+        >
+          <Text style={styles.importButtonText}>
+            Import Monthly XLSX
+          </Text>
+        </Pressable>
 
         <View style={{ height: 40 }} />
 
@@ -319,6 +326,20 @@ historyButtonText: {
 
 exportButtonText: {
   color: "#fff",
+  fontSize: 16,
+  fontWeight: "600",
+},
+
+importButton: {
+  marginTop: 12,
+  paddingVertical: 16,
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: "#222222",
+  alignItems: "center",
+},
+
+importButtonText: {
   fontSize: 16,
   fontWeight: "600",
 },

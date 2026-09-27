@@ -1,5 +1,10 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import type { ExerciseDefinition } from "../data/exercises";
+import type {
+  WorkoutImportExerciseWrite,
+  WorkoutImportPlan,
+  WorkoutImportSnapshot,
+} from "./workout-import";
 function getLocalDateString() {
   const today = new Date();
 
@@ -391,7 +396,116 @@ export async function createCustomExercise(
   };
 }
 
+type WorkoutDatabaseConnection = Pick<
+  SQLiteDatabase,
+  "runAsync"
+>;
 
+function loggedExercisesToWriteModel(
+  exercises: LoggedExercise[]
+): WorkoutImportExerciseWrite[] {
+  return exercises.map((item) => {
+    if (item.exercise.type === "strength") {
+      return {
+        exercise: item.exercise,
+        type: "strength",
+        sets: (item.sets ?? []).map(
+          (set, setIndex) => ({
+            setNumber: setIndex + 1,
+            reps: Number(set.reps),
+            weightKg: set.weight
+              ? Number(set.weight)
+              : null,
+          })
+        ),
+      };
+    }
+
+    return {
+      exercise: item.exercise,
+      type: "cardio",
+      durationSeconds: item.duration
+        ? Number(item.duration) * 60
+        : null,
+      distanceKm: item.distance
+        ? Number(item.distance)
+        : null,
+    };
+  });
+}
+
+async function replaceWorkoutOnConnection(
+  connection: WorkoutDatabaseConnection,
+  date: string,
+  exercises: WorkoutImportExerciseWrite[],
+  timestamp: string
+) {
+  await connection.runAsync(
+    "DELETE FROM workouts WHERE date = ?",
+    date
+  );
+
+  const workoutResult = await connection.runAsync(
+    `
+    INSERT INTO workouts
+    (date, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    `,
+    date,
+    null,
+    timestamp,
+    timestamp
+  );
+
+  const workoutId = workoutResult.lastInsertRowId;
+
+  for (let index = 0; index < exercises.length; index++) {
+    const item = exercises[index];
+    const exerciseResult = await connection.runAsync(
+      `
+      INSERT INTO workout_exercises
+      (workout_id, exercise_definition_id, order_index)
+      VALUES (?, ?, ?)
+      `,
+      workoutId,
+      item.exercise.id,
+      index
+    );
+    const workoutExerciseId =
+      exerciseResult.lastInsertRowId;
+
+    if (item.type === "strength") {
+      for (const set of item.sets) {
+        await connection.runAsync(
+          `
+          INSERT INTO sets
+          (workout_exercise_id, set_number, reps, weight)
+          VALUES (?, ?, ?, ?)
+          `,
+          workoutExerciseId,
+          set.setNumber,
+          set.reps,
+          set.weightKg
+        );
+      }
+
+      continue;
+    }
+
+    if (item.durationSeconds !== null) {
+      await connection.runAsync(
+        `
+        INSERT INTO cardio_details
+        (workout_exercise_id, duration_seconds, distance_km)
+        VALUES (?, ?, ?)
+        `,
+        workoutExerciseId,
+        item.durationSeconds,
+        item.distanceKm
+      );
+    }
+  }
+}
 
 export async function saveWorkout(
   db: SQLiteDatabase,
@@ -399,22 +513,17 @@ export async function saveWorkout(
   exercises: LoggedExercise[]
 ) {
   if (date > getLocalDateString()) {
-  throw new Error(
-    "Cannot save a workout for a future date."
-  );
-}
+    throw new Error(
+      "Cannot save a workout for a future date."
+    );
+  }
+
+  const writeExercises =
+    loggedExercisesToWriteModel(exercises);
   const now = new Date().toISOString();
 
   await db.withExclusiveTransactionAsync(async (txn) => {
-    // Remove an existing workout for this date.
-    // This allows the user to edit/re-save a workout later.
-    await txn.runAsync(
-      "DELETE FROM workouts WHERE date = ?",
-      date
-    );
-
-    // Make sure every exercise exists in the database.
-    for (const item of exercises) {
+    for (const item of writeExercises) {
       await txn.runAsync(
         `
         INSERT OR IGNORE INTO exercise_definitions
@@ -429,91 +538,12 @@ export async function saveWorkout(
       );
     }
 
-    // Create the workout.
-    const workoutResult = await txn.runAsync(
-      `
-      INSERT INTO workouts
-      (date, notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?)
-      `,
+    await replaceWorkoutOnConnection(
+      txn,
       date,
-      null,
-      now,
+      writeExercises,
       now
     );
-
-    const workoutId = workoutResult.lastInsertRowId;
-
-    // Save every exercise.
-    for (let index = 0; index < exercises.length; index++) {
-      const item = exercises[index];
-
-      const exerciseResult = await txn.runAsync(
-        `
-        INSERT INTO workout_exercises
-        (workout_id, exercise_definition_id, order_index)
-        VALUES (?, ?, ?)
-        `,
-        workoutId,
-        item.exercise.id,
-        index
-      );
-
-      const workoutExerciseId =
-        exerciseResult.lastInsertRowId;
-
-      // Strength exercise
-      if (
-        item.exercise.type === "strength" &&
-        item.sets
-      ) {
-        for (
-          let setIndex = 0;
-          setIndex < item.sets.length;
-          setIndex++
-        ) {
-          const set = item.sets[setIndex];
-
-          await txn.runAsync(
-            `
-            INSERT INTO sets
-            (workout_exercise_id, set_number, reps, weight)
-            VALUES (?, ?, ?, ?)
-            `,
-            workoutExerciseId,
-            setIndex + 1,
-            Number(set.reps),
-            set.weight
-              ? Number(set.weight)
-              : null
-          );
-        }
-      }
-
-      // Cardio exercise
-      if (
-        item.exercise.type === "cardio" &&
-        item.duration
-      ) {
-        const durationSeconds =
-          Number(item.duration) * 60;
-
-        const distanceKm = item.distance
-          ? Number(item.distance)
-          : null;
-
-        await txn.runAsync(
-          `
-          INSERT INTO cardio_details
-          (workout_exercise_id, duration_seconds, distance_km)
-          VALUES (?, ?, ?)
-          `,
-          workoutExerciseId,
-          durationSeconds,
-          distanceKm
-        );
-      }
-    }
   });
 }
 
@@ -878,6 +908,205 @@ export async function loadLastExerciseData(
   };
 }
 
+
+type WorkoutImportDefinitionRow = {
+  id: string;
+  name: string;
+  category: string;
+  type: "strength" | "cardio";
+  is_custom: number;
+  is_deleted: number;
+};
+
+function normalizeWorkoutImportSnapshot(
+  definitions: WorkoutImportDefinitionRow[],
+  workoutVersions: {
+    id: number;
+    date: string;
+    updated_at: string;
+  }[]
+): WorkoutImportSnapshot {
+  return {
+    definitions: definitions
+      .map((definition) => ({
+        id: definition.id,
+        name: definition.name,
+        category: definition.category,
+        type: definition.type,
+        isCustom: definition.is_custom === 1,
+        isDeleted: definition.is_deleted === 1,
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    existingDates: workoutVersions.map(
+      (workout) => workout.date
+    ),
+    workoutVersions: workoutVersions.map(
+      (workout) => ({
+        id: workout.id,
+        date: workout.date,
+        updatedAt: workout.updated_at,
+      })
+    ),
+  };
+}
+
+async function readWorkoutImportSnapshot(
+  connection: Pick<
+    SQLiteDatabase,
+    "getAllAsync"
+  >,
+  importedDates: string[]
+): Promise<WorkoutImportSnapshot> {
+  const definitions =
+    await connection.getAllAsync<WorkoutImportDefinitionRow>(
+      `
+      SELECT
+        id,
+        name,
+        category,
+        type,
+        is_custom,
+        is_deleted
+      FROM exercise_definitions
+      ORDER BY id ASC
+      `
+    );
+  let workoutVersions: {
+    id: number;
+    date: string;
+    updated_at: string;
+  }[] = [];
+
+  if (importedDates.length > 0) {
+    const placeholders = importedDates
+      .map(() => "?")
+      .join(", ");
+    workoutVersions = await connection.getAllAsync<{
+      id: number;
+      date: string;
+      updated_at: string;
+    }>(
+      `
+      SELECT id, date, updated_at
+      FROM workouts
+      WHERE date IN (${placeholders})
+      ORDER BY date ASC
+      `,
+      ...importedDates
+    );
+  }
+
+  return normalizeWorkoutImportSnapshot(
+    definitions,
+    workoutVersions
+  );
+}
+
+export async function loadWorkoutImportSnapshot(
+  db: SQLiteDatabase,
+  importedDates: string[]
+): Promise<WorkoutImportSnapshot> {
+  return readWorkoutImportSnapshot(
+    db,
+    [...new Set(importedDates)]
+  );
+}
+
+function snapshotsMatch(
+  current: WorkoutImportSnapshot,
+  expected: WorkoutImportSnapshot
+) {
+  return JSON.stringify(current) === JSON.stringify(expected);
+}
+
+export class StaleWorkoutImportError extends Error {
+  constructor() {
+    super(
+      "Workout data changed after this import was reviewed."
+    );
+    this.name = "StaleWorkoutImportError";
+  }
+}
+
+export function isStaleWorkoutImportError(
+  error: unknown
+): error is StaleWorkoutImportError {
+  return error instanceof StaleWorkoutImportError;
+}
+
+export async function applyWorkoutImport(
+  db: SQLiteDatabase,
+  plan: WorkoutImportPlan
+) {
+  const importedDates = plan.workouts.map(
+    (workout) => workout.date
+  );
+  const timestamp = new Date().toISOString();
+
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    const currentSnapshot =
+      await readWorkoutImportSnapshot(
+        txn,
+        importedDates
+      );
+
+    if (
+      !snapshotsMatch(
+        currentSnapshot,
+        plan.expectedSnapshot
+      )
+    ) {
+      throw new StaleWorkoutImportError();
+    }
+
+    for (const definition of plan.definitionsToInsert) {
+      await txn.runAsync(
+        `
+        INSERT INTO exercise_definitions
+        (id, name, category, type, is_custom, is_deleted)
+        VALUES (?, ?, ?, ?, ?, 0)
+        `,
+        definition.exercise.id,
+        definition.exercise.name,
+        definition.exercise.category,
+        definition.exercise.type,
+        definition.isCustom ? 1 : 0
+      );
+    }
+
+    for (const definition of plan.definitionsToRestore) {
+      const result = await txn.runAsync(
+        `
+        UPDATE exercise_definitions
+        SET is_deleted = 0
+        WHERE id = ?
+        AND name = ?
+        AND category = ?
+        AND type = ?
+        AND is_custom = 1
+        AND is_deleted = 1
+        `,
+        definition.id,
+        definition.name,
+        definition.category,
+        definition.type
+      );
+
+      if (result.changes !== 1) {
+        throw new StaleWorkoutImportError();
+      }
+    }
+
+    for (const workout of plan.workouts) {
+      await replaceWorkoutOnConnection(
+        txn,
+        workout.date,
+        workout.exercises,
+        timestamp
+      );
+    }
+  });
+}
 
 export type MonthlyWorkoutExportRow = {
   date: string;
