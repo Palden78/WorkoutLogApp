@@ -153,3 +153,6 @@ npx expo lint
 ## Current Scope
 
 This project was created primarily as a personal workout tracker. It currently focuses on local, single-user tracking rather than accounts, cloud synchronization, social features, or coaching services.
+
+
+npx expo run:ios --device --configuration Release
